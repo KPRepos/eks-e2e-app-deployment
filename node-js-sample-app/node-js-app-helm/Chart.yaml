@@ -1,0 +1,8 @@
+# Chart.yaml
+apiVersion: v2
+name: node-js-app
+description: A Helm chart for deploying node-js sample app
+version: 1.0.0
+
+
+

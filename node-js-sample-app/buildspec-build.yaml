@@ -1,0 +1,66 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo $AWS_DEFAULT_REGION
+      - echo $AWS_ACCOUNT_ID
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - cd ./docker-files/
+      - echo Build started on `date`
+      - echo Building the Docker image...    
+      - echo $IMAGE_REPO_NAME
+      - echo $IMAGE_TAG
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+      - cd ..
+      - echo "completed Docker Build and Push"
+  build:
+    commands:
+          # install required binary
+      - export AWS_RAW_CRED=$(curl --silent http://169.254.170.2:80$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI)
+      - export AWS_ACCESS_KEY_ID=$(echo $AWS_RAW_CRED | jq -r '.AccessKeyId')
+      - export AWS_SECRET_ACCESS_KEY=$(echo $AWS_RAW_CRED | jq -r '.SecretAccessKey')
+      - export AWS_SESSION_TOKEN=$(echo $AWS_RAW_CRED | jq -r '.Token')
+      - export TF_VAR_region=${AWS_REGION}
+      - echo $CODEBUILD_SRC_DIR
+      - echo "yum installs"
+      - "yum -y -q -e 0 install moreutils bash-completion nmap bind-utils"
+      - echo "kubectl"
+      - curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl
+      - mv ./kubectl /usr/local/bin/kubectl
+      - aws sts get-caller-identity
+      - echo $AWS_REGION
+      - echo $ACCOUNT_ID
+      - pwd
+      - ls
+      - resp=$(aws eks describe-cluster --name eks-devops-lab)
+      - endp=$(echo $resp | jq -r .cluster.endpoint | cut -f3 -d'/')
+      - nslookup $endp
+      - nmap $endp -Pn -p 443
+      - "echo kube config"
+      - rm -f ~/.kube/config
+      - aws eks update-kubeconfig --name eks-devops-lab
+      - kubectl get pods -A
+      - sleep 1
+      - ECR_URL=$(echo $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com)
+      - ls -al
+      - sed -ie "s/Repo_URL/$ECR_URL/g" node-js-app.yaml
+      - sed -ie "s/eks_alb_sg/$eks_alb_sg/g" node-js-app.yaml
+      - cat node-js-app.yaml
+      - curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+      - chmod 700 get_helm.sh
+      - ./get_helm.sh
+      - rm -rf get_helm.sh
+      - pwd
+      - ls -al
+      - cp node-js-app.yaml ./node-js-app-helm/templates/node-js-app.yaml
+      - helm package ./node-js-app-helm 
+      - ls -al 
+      - helm push node-js-app-1.0.0.tgz "oci://$ECR_URL"
+      - helm list -a
+  post_build:
+    commands:
+      - echo Docker image pushed to $ECR_URL Repo and Helm chart uploaded to the same Repo Succesfully 
