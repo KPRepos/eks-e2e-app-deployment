@@ -1,6 +1,6 @@
 # Abstract
 
-  This code/repo deploys a standard VPC an dEKS cluster with managed NodeGroup. Furtrher, it will deploy a CICD pipeline for sample node-js application. This application is created via Docker process and uploaded to ECR and also a Helm package pushed to same ECR. At deploy stage of pipeline, the helm package is pulled to deploy the sample app in EKS.  
+  This code/repo deploys a standard VPC and EKS cluster with managed NodeGroup. Further, it will deploy a CICD pipeline for sample node-js application. This application is created via Docker process and uploaded to ECR and also a Helm package pushed to same ECR. At deploy stage of pipeline, the helm package is pulled to deploy the sample app in EKS.  
                                                                                                       
 ### Architecture Diagram 
 ![](eks-helm-lab.jpg)
