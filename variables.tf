@@ -5,7 +5,7 @@ variable "cluster-name" {
 }
 
 variable "eks_version" {
-  type = string
+  type        = string
   description = "EKS version"
 }
 
@@ -32,3 +32,23 @@ variable "desired_size" {
   type = string
 }
 
+variable "cluster_endpoint_public_access_cidrs" {
+
+  type    = list(any)
+  default = ["0.0.0.0/0"]
+}
+
+variable "deploy_eks_alb_controller" {
+  type = string
+}
+
+variable "cluster_endpoint_public_access" {
+  type        = string
+  description = "true or false"
+  default     = true
+}
+
+variable "instance_types" {
+  type    = list(any)
+  default = ["t3.small"]
+}
