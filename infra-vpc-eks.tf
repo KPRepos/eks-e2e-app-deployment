@@ -4,7 +4,7 @@ data "aws_availability_zones" "available" {}
 data "aws_caller_identity" "current" {}
 
 locals {
-  name = var.env_name
+  name   = var.env_name
   region = var.region
 
   vpc_cidr = "10.0.0.0/16"
@@ -40,11 +40,12 @@ provider "kubernetes" {
 ################################################################################
 
 module "eks" {
-  source = "./modules/terraform-aws-eks"
-
+  # source                         = "./modules/terraform-aws-eks"
+  source                         = "terraform-aws-modules/eks/aws"
+  version                        = "~> 19.13.0"
   cluster_name                   = var.cluster-name
   cluster_endpoint_public_access = true
-  cluster_version = var.eks_version
+  cluster_version                = var.eks_version
 
   cluster_addons = {
     coredns = {
@@ -79,6 +80,13 @@ module "eks" {
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.intra_subnets
 
+
+  ### https://github.com/terraform-aws-modules/terraform-aws-eks/issues/1986
+  ### failed to ensure load balancer: Multiple tagged security groups found for instance
+  node_security_group_tags = {
+    "kubernetes.io/cluster/${var.cluster-name}" = null
+  }
+
   # Extend cluster security group rules
   cluster_security_group_additional_rules = {
     ingress_nodes_ephemeral_ports_tcp = {
@@ -99,12 +107,12 @@ module "eks" {
       source_security_group_id = aws_security_group.additional.id
     }
     ingress_source_security_group_id = {
-      description              = "Ingress from another IP in private subnet"
-      protocol                 = "tcp"
-      from_port                = 443
-      to_port                  = 443
-      type                     = "ingress"
-      cidr_blocks      = ["10.0.0.0/16"]
+      description = "Ingress from another IP in private subnet"
+      protocol    = "tcp"
+      from_port   = 443
+      to_port     = 443
+      type        = "ingress"
+      cidr_blocks = ["10.0.0.0/16"]
     }
   }
 
@@ -133,10 +141,10 @@ module "eks" {
   # EKS Managed Node Group(s)
   eks_managed_node_group_defaults = {
     ami_type       = "AL2_x86_64"
-    instance_types = ["t3.medium"]
+    instance_types = var.instance_types
 
     attach_cluster_primary_security_group = true
-    vpc_security_group_ids                = [aws_security_group.additional.id,aws_security_group.alb_security_group_eks_custom.id]
+    vpc_security_group_ids                = [aws_security_group.additional.id, aws_security_group.alb_security_group_eks_custom.id]
 
     iam_role_additional_policies = {
       additional = aws_iam_policy.additional.arn
@@ -153,7 +161,7 @@ module "eks" {
       instance_types = ["t3.medium"]
       capacity_type  = "SPOT"
       labels = {
-        Environment = "test"
+        Environment = var.env_name
         GithubRepo  = "terraform-aws-eks"
         GithubOrg   = "terraform-aws-modules"
       }
@@ -168,7 +176,6 @@ module "eks" {
   # aws-auth configmap
   manage_aws_auth_configmap = false
 
-
   tags = local.tags
 }
 
@@ -178,7 +185,7 @@ module "eks" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 3.0"
+  version = "~> 4.0.0"
 
   name = local.name
   cidr = local.vpc_cidr
@@ -197,11 +204,13 @@ module "vpc" {
   create_flow_log_cloudwatch_log_group = true
 
   public_subnet_tags = {
-    "kubernetes.io/role/elb" = 1
+    "kubernetes.io/role/elb"                    = 1
+    "kubernetes.io/cluster/${var.cluster-name}" = "shared"
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = 1
+    "kubernetes.io/role/internal-elb"           = 1
+    "kubernetes.io/cluster/${var.cluster-name}" = "shared"
   }
 
   tags = local.tags
@@ -256,9 +265,9 @@ module "kms" {
 
 
 module "lb_role" {
-  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  source = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
 
-  role_name = "${var.env_name}_eks_lb"
+  role_name                              = "${var.env_name}_eks_lb"
   attach_load_balancer_controller_policy = true
 
   oidc_providers = {
@@ -272,14 +281,14 @@ module "lb_role" {
 
 resource "kubernetes_service_account" "service-account" {
   metadata {
-    name = "aws-load-balancer-controller"
+    name      = "aws-load-balancer-controller"
     namespace = "kube-system"
     labels = {
-        "app.kubernetes.io/name"= "aws-load-balancer-controller"
-        "app.kubernetes.io/component"= "controller"
+      "app.kubernetes.io/name"      = "aws-load-balancer-controller"
+      "app.kubernetes.io/component" = "controller"
     }
     annotations = {
-      "eks.amazonaws.com/role-arn" = module.lb_role.iam_role_arn
+      "eks.amazonaws.com/role-arn"               = module.lb_role.iam_role_arn
       "eks.amazonaws.com/sts-regional-endpoints" = "true"
     }
   }
@@ -299,11 +308,12 @@ provider "helm" {
 }
 
 resource "helm_release" "lb" {
+  count      = var.deploy_eks_alb_controller == "yes" ? 1 : 0
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   # version    = "2.4.0"
-  namespace  = "kube-system"
+  namespace = "kube-system"
   depends_on = [
     kubernetes_service_account.service-account, module.eks.eks_managed_node_groups
   ]
@@ -320,7 +330,7 @@ resource "helm_release" "lb" {
 
   set {
     name  = "image.repository"
-    value = "602401143452.dkr.ecr.eu-west-2.amazonaws.com/amazon/aws-load-balancer-controller"
+    value = "public.ecr.aws/eks/aws-load-balancer-controller"
   }
 
   set {
@@ -340,45 +350,45 @@ resource "helm_release" "lb" {
 }
 
 
-resource "aws_ec2_tag" "private_subnet_cluster_tag_1" {
-  # for_each    = toset(module.vpc.private_subnets
-  resource_id = module.vpc.private_subnets[0]
-  key         = "kubernetes.io/role/internal-elb"
-  value       = 1
-}
+# resource "aws_ec2_tag" "private_subnet_cluster_tag_1" {
+#   # for_each    = toset(module.vpc.private_subnets
+#   resource_id = module.vpc.private_subnets[0]
+#   key         = "kubernetes.io/role/internal-elb"
+#   value       = 1
+# }
 
-resource "aws_ec2_tag" "private_subnet_cluster_tag_2" {
-  # for_each    = toset(module.vpc.private_subnets
-  resource_id = module.vpc.private_subnets[1]
-  key         = "kubernetes.io/role/internal-elb"
-  value       = 1
-}
+# resource "aws_ec2_tag" "private_subnet_cluster_tag_2" {
+#   # for_each    = toset(module.vpc.private_subnets
+#   resource_id = module.vpc.private_subnets[1]
+#   key         = "kubernetes.io/role/internal-elb"
+#   value       = 1
+# }
 
-resource "aws_ec2_tag" "public_subnet_cluster_tag_1" {
-  # for_each    = toset(module.vpc.public_subnets)
-  resource_id = module.vpc.public_subnets[0]
-  key         = "kubernetes.io/role/elb"
-  value       = 1
-}
+# resource "aws_ec2_tag" "public_subnet_cluster_tag_1" {
+#   # for_each    = toset(module.vpc.public_subnets)
+#   resource_id = module.vpc.public_subnets[0]
+#   key         = "kubernetes.io/role/elb"
+#   value       = 1
+# }
 
 
-resource "aws_ec2_tag" "public_subnet_cluster_tag_2" {
-  # for_each    = toset(module.vpc.public_subnets)
-  resource_id = module.vpc.public_subnets[1]
-  key         = "kubernetes.io/role/elb"
-  value       = 1
-}
+# resource "aws_ec2_tag" "public_subnet_cluster_tag_2" {
+#   # for_each    = toset(module.vpc.public_subnets)
+#   resource_id = module.vpc.public_subnets[1]
+#   key         = "kubernetes.io/role/elb"
+#   value       = 1
+# }
 
 
 resource "aws_security_group" "alb_security_group_eks_custom" {
-    name = "${var.env_name}_alb_security_group_eks_custom"
+  name = "${var.env_name}_alb_security_group_eks_custom"
   # ... other configuration ...
-    ingress {
-    description      = "port 80 Traffic"
-    from_port        = 80
-    to_port          = 80
-    protocol         = "tcp"
-    cidr_blocks      = ["0.0.0.0/0"]
+  ingress {
+    description = "port 80 Traffic"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
   egress {
     from_port        = 0
@@ -388,20 +398,20 @@ resource "aws_security_group" "alb_security_group_eks_custom" {
     ipv6_cidr_blocks = ["::/0"]
   }
 
-  vpc_id      = module.vpc.vpc_id
-tags = {
+  vpc_id = module.vpc.vpc_id
+  tags = {
     Name = "${var.env_name}_alb_security_group_eks_custom"
   }
 }
 
 
 resource "aws_security_group_rule" "Custom_Security_Group_Rule_for_alb" {
-  type              = "ingress"
-  from_port         = 80
-  to_port           = 80
-  protocol          = "tcp"
-  source_security_group_id       = aws_security_group.alb_security_group_eks_custom.id
-  security_group_id = module.eks.cluster_security_group_id
+  type                     = "ingress"
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.alb_security_group_eks_custom.id
+  security_group_id        = module.eks.cluster_security_group_id
 }
 
 
